@@ -1,0 +1,406 @@
+/** @jsxImportSource https://esm.sh/react */
+import React, { useState, useEffect } from "https://esm.sh/react";
+import { createRoot } from "https://esm.sh/react-dom/client";
+
+// Main App component
+function App() {
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState('login');
+  const [properties, setProperties] = useState([]);
+  const [maintenanceRequests, setMaintenanceRequests] = useState([]);
+
+  useEffect(() => {
+    if (user) {
+      fetchProperties();
+      fetchMaintenanceRequests();
+    }
+  }, [user]);
+
+  const fetchProperties = async () => {
+    const response = await fetch('/api/properties');
+    const data = await response.json();
+    setProperties(data);
+  };
+
+  const fetchMaintenanceRequests = async () => {
+    const response = await fetch('/api/maintenance');
+    const data = await response.json();
+    setMaintenanceRequests(data);
+  };
+
+  const handleLogin = async (email, password) => {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json();
+    if (data.success) {
+      setUser(data.user);
+      setView('dashboard');
+    } else {
+      alert('Login failed. Please try again.');
+    }
+  };
+
+  const handleRegister = async (email, password) => {
+    const response = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json();
+    if (data.success) {
+      setUser(data.user);
+      setView('dashboard');
+    } else {
+      alert('Registration failed. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setView('login');
+  };
+
+  const handleMaintenanceAction = async (requestId, action) => {
+    const response = await fetch(`/api/maintenance/${requestId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    if (response.ok) {
+      fetchMaintenanceRequests();
+    } else {
+      alert('Failed to update maintenance request. Please try again.');
+    }
+  };
+
+  return (
+    <div className="app">
+      <header>
+        <h1>Symdel Property Management</h1>
+        {user && <button onClick={handleLogout}>Logout</button>}
+      </header>
+      {view === 'login' && <LoginRegisterForm onLogin={handleLogin} onRegister={handleRegister} />}
+      {view === 'dashboard' && user && (
+        <div className="dashboard">
+          <h2>Welcome, {user.email}</h2>
+          <PropertyOverview properties={properties} />
+          <RentCollectionTracking properties={properties} />
+          <MaintenanceRequests 
+            requests={maintenanceRequests} 
+            onAction={handleMaintenanceAction} 
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoginRegisterForm({ onLogin, onRegister }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLogin, setIsLogin] = useState(true);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (isLogin) {
+      onLogin(email, password);
+    } else {
+      onRegister(email, password);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <h2>{isLogin ? 'Login' : 'Register'}</h2>
+      <input
+        type="email"
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <input
+        type="password"
+        placeholder="Password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+      />
+      <button type="submit">{isLogin ? 'Login' : 'Register'}</button>
+      <button type="button" onClick={() => setIsLogin(!isLogin)}>
+        {isLogin ? 'Need to register?' : 'Already have an account?'}
+      </button>
+    </form>
+  );
+}
+
+function PropertyOverview({ properties }) {
+  return (
+    <div className="property-overview">
+      <h3>Property Overview</h3>
+      <ul>
+        {properties.map(property => (
+          <li key={property.id}>
+            {property.address} - Status: {property.status}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function RentCollectionTracking({ properties }) {
+  return (
+    <div className="rent-tracking">
+      <h3>Rent Collection Tracking</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Last Payment</th>
+            <th>Outstanding Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          {properties.map(property => (
+            <tr key={property.id}>
+              <td>{property.address}</td>
+              <td>{property.lastPayment}</td>
+              <td>${property.outstandingBalance}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MaintenanceRequests({ requests, onAction }) {
+  return (
+    <div className="maintenance-requests">
+      <h3>Maintenance Requests</h3>
+      <ul>
+        {requests.map(request => (
+          <li key={request.id}>
+            {request.description} - Status: {request.status}
+            {request.status === 'pending' && (
+              <>
+                <button onClick={() => onAction(request.id, 'approve')}>Approve</button>
+                <button onClick={() => onAction(request.id, 'deny')}>Deny</button>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function client() {
+  createRoot(document.getElementById("root")).render(<App />);
+}
+
+if (typeof document !== "undefined") {
+  client();
+}
+
+export default async function server(request: Request): Promise<Response> {
+  const { sqlite } = await import("https://esm.town/v/stevekrouse/sqlite");
+  const SCHEMA_VERSION = 1;
+  const KEY = new URL(import.meta.url).pathname.split("/").at(-1);
+
+  // Initialize database tables
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS ${KEY}_users_${SCHEMA_VERSION} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL
+    )
+  `);
+
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS ${KEY}_properties_${SCHEMA_VERSION} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id INTEGER NOT NULL,
+      address TEXT NOT NULL,
+      status TEXT NOT NULL,
+      last_payment TEXT,
+      outstanding_balance REAL,
+      FOREIGN KEY (owner_id) REFERENCES ${KEY}_users_${SCHEMA_VERSION}(id)
+    )
+  `);
+
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS ${KEY}_maintenance_requests_${SCHEMA_VERSION} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      property_id INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL,
+      FOREIGN KEY (property_id) REFERENCES ${KEY}_properties_${SCHEMA_VERSION}(id)
+    )
+  `);
+
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/')) {
+    // Handle API requests
+    if (url.pathname === '/api/login' && request.method === 'POST') {
+      const { email, password } = await request.json();
+      const result = await sqlite.execute(
+        `SELECT * FROM ${KEY}_users_${SCHEMA_VERSION} WHERE email = ? AND password = ?`,
+        [email, password]
+      );
+      if (result.rows.length > 0) {
+        return new Response(JSON.stringify({ success: true, user: { email } }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else {
+        return new Response(JSON.stringify({ success: false }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } else if (url.pathname === '/api/register' && request.method === 'POST') {
+      const { email, password } = await request.json();
+      try {
+        await sqlite.execute(
+          `INSERT INTO ${KEY}_users_${SCHEMA_VERSION} (email, password) VALUES (?, ?)`,
+          [email, password]
+        );
+        return new Response(JSON.stringify({ success: true, user: { email } }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ success: false }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } else if (url.pathname === '/api/properties') {
+      const result = await sqlite.execute(`SELECT * FROM ${KEY}_properties_${SCHEMA_VERSION}`);
+      return new Response(JSON.stringify(result.rows), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } else if (url.pathname === '/api/maintenance') {
+      const result = await sqlite.execute(`SELECT * FROM ${KEY}_maintenance_requests_${SCHEMA_VERSION}`);
+      return new Response(JSON.stringify(result.rows), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } else if (url.pathname.startsWith('/api/maintenance/') && request.method === 'POST') {
+      const requestId = url.pathname.split('/').pop();
+      const { action } = await request.json();
+      await sqlite.execute(
+        `UPDATE ${KEY}_maintenance_requests_${SCHEMA_VERSION} SET status = ? WHERE id = ?`,
+        [action === 'approve' ? 'approved' : 'denied', requestId]
+      );
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  // Serve the main HTML page for all other requests
+  return new Response(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Symdel Property Management</title>
+        <style>${css}</style>
+      </head>
+      <body>
+        <div id="root"></div>
+        <script src="https://esm.town/v/std/catch"></script>
+        <script type="module" src="${import.meta.url}"></script>
+        <footer>
+          <a href="${import.meta.url.replace("esm.town", "val.town")}" target="_top">View Source</a>
+        </footer>
+      </body>
+    </html>
+  `, {
+    headers: { "Content-Type": "text/html" },
+  });
+}
+
+const css = `
+  body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    padding: 20px;
+    background-color: #f4f4f4;
+  }
+  .app {
+    max-width: 800px;
+    margin: 0 auto;
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  h1, h2, h3 {
+    color: #333;
+  }
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  input, button {
+    padding: 10px;
+    font-size: 16px;
+  }
+  button {
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+  }
+  button:hover {
+    background-color: #0056b3;
+  }
+  ul {
+    list-style-type: none;
+    padding: 0;
+  }
+  li {
+    background-color: #f9f9f9;
+    padding: 10px;
+    margin-bottom: 5px;
+    border-radius: 3px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+  }
+  th {
+    background-color: #f2f2f2;
+  }
+  footer {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 14px;
+  }
+  footer a {
+    color: #007bff;
+    text-decoration: none;
+  }
+  footer a:hover {
+    text-decoration: underline;
+  }
+`;
